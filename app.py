@@ -23,11 +23,18 @@ def init_db():
             activated_at TEXT DEFAULT NULL,
             expires_at TEXT DEFAULT NULL,
             created_at TEXT NOT NULL,
-            is_active INTEGER DEFAULT 1,
-            is_used INTEGER DEFAULT 0
+            is_active INTEGER DEFAULT 1
         )
     """)
     conn.commit()
+    
+    # Eksik sütunları kontrol et ve ekle
+    cursor = conn.execute("PRAGMA table_info(licenses)")
+    columns = [col[1] for col in cursor.fetchall()]
+    if "is_used" not in columns:
+        conn.execute("ALTER TABLE licenses ADD COLUMN is_used INTEGER DEFAULT 0")
+        conn.commit()
+    
     conn.close()
 
 def generate_key(prefix="XEAN"):
