@@ -2,7 +2,7 @@ from flask import Flask, request, jsonify
 import sqlite3
 import secrets
 import string
-from datetime import datetime
+from datetime import datetime, timedelta
 
 app = Flask(__name__)
 DB_PATH = "licenses.db"
@@ -19,7 +19,9 @@ def init_db():
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             key TEXT UNIQUE NOT NULL,
             hwid TEXT DEFAULT NULL,
+            plan TEXT NOT NULL DEFAULT 'lifetime',
             activated_at TEXT DEFAULT NULL,
+            expires_at TEXT DEFAULT NULL,
             created_at TEXT NOT NULL,
             is_active INTEGER DEFAULT 1
         )
@@ -37,15 +39,22 @@ def generate():
     auth = request.headers.get("X-Admin-Token")
     if auth != "myapp-admin-2024":
         return jsonify({"error": "Unauthorized"}), 401
+    
+    data = request.get_json() or {}
+    plan = data.get("plan", "lifetime")
+    
+    if plan not in ["weekly", "monthly", "lifetime"]:
+        return jsonify({"error": "Invalid plan"}), 400
+    
     key = generate_key()
     conn = get_db()
     try:
         conn.execute(
-            "INSERT INTO licenses (key, created_at) VALUES (?, ?)",
-            (key, datetime.utcnow().isoformat())
+            "INSERT INTO licenses (key, plan, created_at) VALUES (?, ?, ?)",
+            (key, plan, datetime.utcnow().isoformat())
         )
         conn.commit()
-        return jsonify({"key": key})
+        return jsonify({"key": key, "plan": plan})
     except sqlite3.IntegrityError:
         return jsonify({"error": "Retry"}), 500
     finally:
@@ -58,28 +67,48 @@ def activate():
     hwid = data.get("hwid", "").strip()
     if not key or not hwid:
         return jsonify({"success": False, "reason": "Missing fields"}), 400
+    
     conn = get_db()
     row = conn.execute("SELECT * FROM licenses WHERE key = ?", (key,)).fetchone()
+    
     if not row:
         conn.close()
-        return jsonify({"success": False, "reason": "Invalid key"})
+        return jsonify({"success": False, "reason": "Geçersiz key"})
     if not row["is_active"]:
         conn.close()
-        return jsonify({"success": False, "reason": "Key disabled"})
+        return jsonify({"success": False, "reason": "Key devre dışı"})
+    
     if row["hwid"] is not None:
         if row["hwid"] == hwid:
             conn.close()
-            return jsonify({"success": True, "reason": "Already activated"})
+            return jsonify({
+                "success": True,
+                "plan": row["plan"],
+                "expires_at": row["expires_at"]
+            })
         else:
             conn.close()
-            return jsonify({"success": False, "reason": "Key used on another machine"})
+            return jsonify({"success": False, "reason": "Key başka cihazda kullanılıyor"})
+    
+    now = datetime.utcnow()
+    if row["plan"] == "weekly":
+        expires_at = (now + timedelta(days=7)).isoformat()
+    elif row["plan"] == "monthly":
+        expires_at = (now + timedelta(days=30)).isoformat()
+    else:
+        expires_at = None
+    
     conn.execute(
-        "UPDATE licenses SET hwid = ?, activated_at = ? WHERE key = ?",
-        (hwid, datetime.utcnow().isoformat(), key)
+        "UPDATE licenses SET hwid = ?, activated_at = ?, expires_at = ? WHERE key = ?",
+        (hwid, now.isoformat(), expires_at, key)
     )
     conn.commit()
     conn.close()
-    return jsonify({"success": True, "reason": "Activated"})
+    return jsonify({
+        "success": True,
+        "plan": row["plan"],
+        "expires_at": expires_at
+    })
 
 @app.route("/api/verify", methods=["POST"])
 def verify():
@@ -88,13 +117,27 @@ def verify():
     hwid = data.get("hwid", "").strip()
     if not key or not hwid:
         return jsonify({"valid": False}), 400
+    
     conn = get_db()
     row = conn.execute(
         "SELECT * FROM licenses WHERE key = ? AND hwid = ? AND is_active = 1",
         (key, hwid)
     ).fetchone()
     conn.close()
-    return jsonify({"valid": row is not None})
+    
+    if not row:
+        return jsonify({"valid": False})
+    
+    if row["expires_at"]:
+        expires = datetime.fromisoformat(row["expires_at"])
+        if datetime.utcnow() > expires:
+            return jsonify({"valid": False, "reason": "Süre doldu"})
+        remaining = expires - datetime.utcnow()
+        days = remaining.days
+        hours = remaining.seconds // 3600
+        return jsonify({"valid": True, "plan": row["plan"], "expires_at": row["expires_at"], "remaining": f"{days} gün {hours} saat"})
+    
+    return jsonify({"valid": True, "plan": "lifetime", "expires_at": None, "remaining": "Sınırsız"})
 
 init_db()
 
