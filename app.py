@@ -23,15 +23,16 @@ def init_db():
             activated_at TEXT DEFAULT NULL,
             expires_at TEXT DEFAULT NULL,
             created_at TEXT NOT NULL,
-            is_active INTEGER DEFAULT 1
+            is_active INTEGER DEFAULT 1,
+            is_used INTEGER DEFAULT 0
         )
     """)
     conn.commit()
     conn.close()
 
-def generate_key(prefix="MYAPP"):
-    chars = string.ascii_uppercase + string.digits
-    segments = [''.join(secrets.choice(chars) for _ in range(5)) for _ in range(4)]
+def generate_key(prefix="XEAN"):
+    chars = string.ascii_uppercase + string.digits + "!@#$%"
+    segments = [''.join(secrets.choice(chars) for _ in range(6)) for _ in range(4)]
     return f"{prefix}-" + "-".join(segments)
 
 @app.route("/api/generate", methods=["POST"])
@@ -41,7 +42,7 @@ def generate():
         return jsonify({"error": "Unauthorized"}), 401
     data = request.get_json() or {}
     plan = data.get("plan", "lifetime")
-    if plan not in ["weekly", "monthly", "lifetime"]:
+    if plan not in ["weekly", "monthly", "lifetime", "single"]:
         return jsonify({"error": "Invalid plan"}), 400
     key = generate_key()
     conn = get_db()
@@ -72,7 +73,13 @@ def activate():
     if not row["is_active"]:
         conn.close()
         return jsonify({"success": False, "reason": "Key devre dışı"})
-    if row["hwid"] is not None:
+
+    # Single use kontrolü
+    if row["plan"] == "single" and row["is_used"]:
+        conn.close()
+        return jsonify({"success": False, "reason": "Single keyiniz daha önce kullanılmıştır"})
+
+    if row["hwid"] is not None and row["plan"] != "single":
         if row["hwid"] == hwid:
             if row["expires_at"]:
                 expires = datetime.fromisoformat(row["expires_at"])
@@ -85,6 +92,7 @@ def activate():
         else:
             conn.close()
             return jsonify({"success": False, "reason": "Key başka cihazda kullanılıyor"})
+
     now = datetime.utcnow()
     if row["plan"] == "weekly":
         expires_at = (now + timedelta(days=7)).isoformat()
@@ -92,19 +100,41 @@ def activate():
         expires_at = (now + timedelta(days=30)).isoformat()
     else:
         expires_at = None
+
     conn.execute(
         "UPDATE licenses SET hwid = ?, activated_at = ?, expires_at = ? WHERE key = ?",
         (hwid, now.isoformat(), expires_at, key)
     )
     conn.commit()
     conn.close()
+
     if expires_at:
         expires = datetime.fromisoformat(expires_at)
         diff = expires - datetime.utcnow()
         remaining_str = f"{diff.days} gün {diff.seconds // 3600} saat"
     else:
         remaining_str = "Sınırsız"
+
     return jsonify({"success": True, "plan": row["plan"], "expires_at": expires_at, "remaining": remaining_str})
+
+@app.route("/api/use_single", methods=["POST"])
+def use_single():
+    data = request.get_json()
+    key = data.get("key", "").strip()
+    if not key:
+        return jsonify({"success": False}), 400
+    conn = get_db()
+    row = conn.execute("SELECT * FROM licenses WHERE key = ?", (key,)).fetchone()
+    if not row or row["plan"] != "single":
+        conn.close()
+        return jsonify({"success": False, "reason": "Geçersiz key"})
+    if row["is_used"]:
+        conn.close()
+        return jsonify({"success": False, "reason": "Single keyiniz daha önce kullanılmıştır"})
+    conn.execute("UPDATE licenses SET is_used = 1, is_active = 0 WHERE key = ?", (key,))
+    conn.commit()
+    conn.close()
+    return jsonify({"success": True})
 
 @app.route("/api/verify", methods=["POST"])
 def verify():
