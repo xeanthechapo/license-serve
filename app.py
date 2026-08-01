@@ -13,19 +13,29 @@ def get_db():
     return conn
 
 def init_db():
-    conn = get_db()
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS licenses (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            key TEXT UNIQUE NOT NULL,
-            hwid TEXT DEFAULT NULL,
-            plan TEXT NOT NULL DEFAULT 'lifetime',
-            activated_at TEXT DEFAULT NULL,
-            expires_at TEXT DEFAULT NULL,
-            created_at TEXT NOT NULL,
-            is_active INTEGER DEFAULT 1
-        )
-    """)
+    conn.execute(
+        "UPDATE licenses SET hwid = ?, activated_at = ?, expires_at = ? WHERE key = ?",
+        (hwid, now.isoformat(), expires_at, key)
+    )
+    conn.commit()
+    conn.close()
+
+    if expires_at:
+        expires = datetime.fromisoformat(expires_at)
+        remaining = datetime.utcnow()
+        diff = expires - remaining
+        days = diff.days
+        hours = diff.seconds // 3600
+        remaining_str = f"{days} gün {hours} saat"
+    else:
+        remaining_str = "Sınırsız"
+
+    return jsonify({
+        "success": True,
+        "plan": row["plan"],
+        "expires_at": expires_at,
+        "remaining": remaining_str
+    })
     conn.commit()
     conn.close()
 
