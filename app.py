@@ -31,7 +31,7 @@ def init_db():
     conn.close()
 
 def generate_key(prefix="XEAN"):
-    chars = string.ascii_uppercase + string.digits + "!@#$%"
+    chars = string.ascii_uppercase + string.digits
     segments = [''.join(secrets.choice(chars) for _ in range(6)) for _ in range(4)]
     return f"{prefix}-" + "-".join(segments)
 
