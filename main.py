@@ -5,8 +5,10 @@ import platform
 import subprocess
 import uuid
 import requests
+import webbrowser
 
 SERVER = "https://license-serve-production.up.railway.app"
+DISCORD_LINK = "https://discord.gg/MJNH9r2xA"
 
 BG = "#0d0d0d"
 BG2 = "#141414"
@@ -52,7 +54,79 @@ def draw_glow_text(canvas, x, y, text, size=38):
                     canvas.create_text(x+dx, y+dy, text=text, font=(FONT, size, "bold"), fill=color)
     canvas.create_text(x, y, text=text, font=(FONT, size, "bold"), fill="#ff4d5a")
 
-def show_main_app(remaining, plan, key):
+def show_inject_animation(app, key, is_single):
+    win = tk.Toplevel(app)
+    win.title("XEAN Injector")
+    win.geometry("420x220")
+    win.configure(bg=BG)
+    win.resizable(False, False)
+    win.grab_set()
+
+    tk.Frame(win, bg=RED, height=3).pack(fill="x")
+
+    tk.Label(win, text="⚡ XEAN INJECTOR", font=(FONT, 14, "bold"), fg=RED_GLOW, bg=BG).pack(pady=(25, 5))
+    status_label = tk.Label(win, text="Başlatılıyor...", font=(FONT, 9), fg=GRAY, bg=BG)
+    status_label.pack(pady=(0, 20))
+
+    # Progress bar zemin
+    bar_bg = tk.Frame(win, bg=BG2, width=340, height=18)
+    bar_bg.pack()
+    bar_bg.pack_propagate(False)
+    bar_fill = tk.Frame(bar_bg, bg=RED, width=0, height=18)
+    bar_fill.place(x=0, y=0)
+
+    percent_label = tk.Label(win, text="0%", font=(FONT, 9, "bold"), fg=WHITE, bg=BG)
+    percent_label.pack(pady=10)
+
+    steps = [
+        (15, "Modüller yükleniyor..."),
+        (35, "Bellek taranıyor..."),
+        (55, "İşlem enjekte ediliyor..."),
+        (75, "Bağlantılar doğrulanıyor..."),
+        (90, "Son kontroller yapılıyor..."),
+        (100, "Tamamlandı!"),
+    ]
+
+    def animate(i=0):
+        if i < len(steps):
+            percent, text = steps[i]
+            width = int(340 * percent / 100)
+            bar_fill.config(width=width)
+            percent_label.config(text=f"{percent}%")
+            status_label.config(text=text)
+            win.after(450, lambda: animate(i+1))
+        else:
+            win.after(400, finish)
+
+    def finish():
+        if is_single:
+            result = use_single_key(key)
+            if not result.get("success"):
+                win.destroy()
+                messagebox.showerror("Hata", result.get("reason", "Inject başarısız!"))
+                return
+
+        win.destroy()
+        success = tk.Toplevel(app)
+        success.title("Başarılı")
+        success.geometry("380x180")
+        success.configure(bg=BG)
+        success.resizable(False, False)
+        success.grab_set()
+
+        tk.Frame(success, bg=RED, height=3).pack(fill="x")
+        tk.Label(success, text="✔", font=(FONT, 30, "bold"), fg=RED_GLOW, bg=BG).pack(pady=(20,5))
+        tk.Label(success, text="Başarıyla inject edildi!", font=(FONT, 13, "bold"), fg=WHITE, bg=BG).pack()
+        tk.Label(success, text="Discord sunucumuza yönlendiriliyorsunuz...", font=(FONT, 8), fg=GRAY, bg=BG).pack(pady=(5,15))
+
+        webbrowser.open(DISCORD_LINK)
+
+        if is_single:
+            return True
+
+    animate()
+
+def show_main_app(remaining, plan, key, used=False):
     root.destroy()
     app = tk.Tk()
     app.title("XEAN")
@@ -89,20 +163,21 @@ def show_main_app(remaining, plan, key):
     tk.Label(info, text=plan_text, font=(FONT, 13, "bold"), fg=RED_GLOW, bg=BG2).grid(row=1, column=0, sticky="w")
     tk.Label(info, text=remaining, font=(FONT, 13, "bold"), fg=WHITE, bg=BG2).grid(row=1, column=1, sticky="w", padx=(60,0))
 
-    if plan == "single":
-        def inject():
-            result = use_single_key(key)
-            if result.get("success"):
-                inject_btn.config(state="disabled", text="✔ Inject Edildi", bg="#1a1a1a", fg=GRAY)
-                messagebox.showinfo("Başarılı", "Başarıyla inject edildi!")
-            else:
-                messagebox.showerror("Hata", result.get("reason", "Inject başarısız!"))
+    is_single = (plan == "single")
 
-        inject_btn = tk.Button(app, text="⚡  INJECT ET", font=(FONT, 11, "bold"),
-                               bg=RED, fg=WHITE, activebackground=RED_DARK,
-                               relief="flat", padx=30, pady=10,
-                               cursor="hand2", command=inject)
-        inject_btn.pack(pady=15)
+    def on_inject():
+        show_inject_animation(app, key, is_single)
+        if is_single:
+            inject_btn.config(state="disabled", text="Zaten Kullanıldı", bg="#1a1a1a", fg=GRAY, disabledforeground=GRAY)
+
+    inject_btn = tk.Button(app, text="⚡  INJECT ET", font=(FONT, 11, "bold"),
+                           bg=RED, fg=WHITE, activebackground=RED_DARK,
+                           relief="flat", padx=30, pady=10,
+                           cursor="hand2", command=on_inject)
+    inject_btn.pack(pady=15)
+
+    if is_single and used:
+        inject_btn.config(state="disabled", text="Zaten Kullanıldı", bg="#1a1a1a", fg=GRAY, disabledforeground=GRAY)
 
     tk.Label(app, text="© 2024 XEAN. Tüm hakları saklıdır.", font=(FONT, 8), fg=GRAY, bg=BG).pack(side="bottom", pady=6)
     tk.Frame(app, bg=RED, height=2).pack(fill="x", side="bottom")
@@ -118,7 +193,7 @@ def try_activate():
     root.update()
     result = activate_license(key)
     if result.get("success"):
-        show_main_app(result.get("remaining", "Tek Kullanım"), result.get("plan", "single"), key)
+        show_main_app(result.get("remaining", "Tek Kullanım"), result.get("plan", "single"), key, result.get("used", False))
     else:
         btn.config(state="normal", text="AKTİF ET")
         messagebox.showerror("Hata", result.get("reason", "Geçersiz lisans anahtarı!"))
